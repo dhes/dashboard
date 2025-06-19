@@ -36,6 +36,15 @@ function groupObservationsByDate(observations: Observation[]): Record<string, Ob
   }, {});
 }
 
+function groupProceduresByDate(procedures: Procedure[]): Record<string, Procedure[]> {
+  return procedures.reduce((acc: Record<string, Procedure[]>, p) => {
+    const date = p.performedDateTime?.slice(0, 10) ?? "Unknown Date";
+    if (!acc[date]) acc[date] = [];
+    acc[date].push(p);
+    return acc;
+  }, {});
+}
+
 export default function Dashboard() {
   const [labs, setLabs] = useState<Observation[]>([]);
   const [procedures, setProcedures] = useState<Procedure[]>([]);
@@ -45,7 +54,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchFHIR<Patient>("Patient", `_id=${PATIENT_ID}`).then((results) => setPatient(results[0]));
-    fetchFHIR<Condition>("Condition", `patient=${PATIENT_ID}`).then(setConditions);
+    fetchFHIR<Condition>("Condition", `patient=${PATIENT_ID}`).then((results) =>
+      setConditions(results.filter((c) => c.clinicalStatus?.coding?.[0]?.code !== "resolved"))
+    );
     // fetchFHIR<MedicationStatement>("MedicationStatement", `patient=${PATIENT_ID}`).then(setMedications);
     fetchFHIR<MedicationStatement>("MedicationStatement", `patient=${PATIENT_ID}`).then((results) =>
       setMedications(results.filter((m: MedicationStatement) => m.status === "active"))
@@ -144,12 +155,52 @@ export default function Dashboard() {
           <CardContent>
             <h2 className="text-xl font-bold mb-2">🧾 Procedures</h2>
             <ul>
-              {procedures.map((p: Procedure) => (
-                <li key={p.id}>
-                  {getDisplayText(p.code)} ({p.performedDateTime?.slice(0, 10)})
-                  {/* {p.outcome?.coding ? ` — ${getCodingDisplay(p.outcome.coding)}` : ""} */}
-                </li>
-              ))}
+              {Object.entries(groupProceduresByDate(procedures))
+                .sort(([a], [b]) => b.localeCompare(a))
+                .map(([date, procs]) => {
+                  const byId = Object.fromEntries(procs.filter(p => p.id).map((p) => [`Procedure/${p.id!}`, p]));
+                  const childToParent: Record<string, string> = {};
+                  procs.forEach((p) => {
+                    if (p.id && p.partOf) {
+                      p.partOf.forEach((po) => {
+                        if (po.reference) {
+                          childToParent[p.id!] = po.reference;
+                        }
+                      });
+                    }
+                  });
+
+                  const parentGroups: Record<string, Procedure[]> = {};
+                  procs.forEach((p) => {
+                    const parentId = childToParent[p.id!];
+                    if (p.id && parentId && byId[parentId]) {
+                      if (!parentGroups[parentId]) parentGroups[parentId] = [];
+                      parentGroups[parentId].push(p);
+                    }
+                  });
+
+                  const shown = new Set<string>();
+                  return (
+                    <li key={date}>
+                      <strong>{date}</strong>
+                      <ul>
+                        {procs.map((p) => {
+                          if (!p.id) return null;
+                          if (childToParent[p.id]) return null; // skip child here
+                          shown.add(p.id);
+                          const children = parentGroups[`Procedure/${p.id}`] || [];
+                          const description = [
+                            getDisplayText(p.code).replace(/\s*\(procedure\)$/i, ""),
+                            ...children.map((c) =>
+                              getDisplayText(c.code).replace(/\s*\(procedure\)$/i, "")
+                            ),
+                          ].join(" with ");
+                          return <li key={p.id}>{description}</li>;
+                        })}
+                      </ul>
+                    </li>
+                  );
+                })}
             </ul>
           </CardContent>
         </Card>
