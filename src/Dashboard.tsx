@@ -1,8 +1,10 @@
 // Dashboard.tsx
+import React from "react";
 import type { Observation, Patient, Procedure, MedicationStatement, Condition, AllergyIntolerance, FamilyMemberHistory, Immunization } from "fhir/r4";
 import { useEffect, useState } from "react";
 // import { Card, CardContent } from "@/components/ui/card";
 import { Card, CardContent } from "./components/ui/card";
+import { Card as MuiCard, CardContent as MuiCardContent, Typography, List, ListItem, ListItemText, Divider } from '@mui/material';
 
 const FHIR_SERVER = "http://localhost:8080/fhir"; // Replace with your actual URL
 const PATIENT_ID = "heslinga-dan"; // Replace with your actual Patient ID
@@ -54,9 +56,19 @@ export default function Dashboard() {
   const [allergies, setAllergies] = useState<AllergyIntolerance[]>([]);
   const [familyHistories, setFamilyHistories] = useState<FamilyMemberHistory[]>([]);
   const [immunizations, setImmunizations] = useState<Immunization[]>([]);
+  const [psaReminder, setPsaReminder] = useState<string | null>(null);
 
   useEffect(() => {
     fetchFHIR<Patient>("Patient", `_id=${PATIENT_ID}`).then((results) => setPatient(results[0]));
+    fetch(`${FHIR_SERVER}/PlanDefinition/psa-reminder/$apply?subject=Patient/${PATIENT_ID}`)
+      .then((res) => res.json())
+      .then((carePlan) => {
+        const action = carePlan.contained?.[0]?.action?.[0];
+        if (action && action.title) {
+          setPsaReminder(`${action.title}: ${action.description}`);
+        }
+      })
+      .catch((err) => console.error("Error fetching PSA reminder:", err));
     fetchFHIR<Condition>("Condition", `patient=${PATIENT_ID}`).then((results) =>
       setConditions(results.filter((c) => c.clinicalStatus?.coding?.[0]?.code !== "resolved"))
     );
@@ -91,6 +103,12 @@ export default function Dashboard() {
 
   return (
     <>
+      {psaReminder && (
+        <div className="mb-4 p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700">
+          <p className="font-semibold">🔔 Reminder</p>
+          <p>{psaReminder}</p>
+        </div>
+      )}
       {patient && (
         <div className="mb-4 p-4 bg-white shadow rounded">
           <h2 className="text-xl font-semibold">👤 Patient</h2>
@@ -137,21 +155,30 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent>
-            <h2 className="text-xl font-bold mb-2">💊 Medications</h2>
-            <ul>
-              {medications.map((m: MedicationStatement) => (
-                <li key={m.id}>
-                  {getDisplayText(m.medicationCodeableConcept)}
-                  {m.dosage?.[0]?.doseAndRate?.[0]?.doseQuantity
-                    ? ` — ${formatQuantity(m.dosage[0].doseAndRate[0].doseQuantity)}`
-                    : ""}
-                </li>
+        <MuiCard>
+          <MuiCardContent>
+            <Typography variant="h6" gutterBottom>
+              💊 Medications
+            </Typography>
+            <List dense>
+              {medications.map((m: MedicationStatement, index) => (
+                <React.Fragment key={m.id || index}>
+                  <ListItem>
+                    <ListItemText
+                      primary={getDisplayText(m.medicationCodeableConcept)}
+                      secondary={
+                        m.dosage?.[0]?.doseAndRate?.[0]?.doseQuantity
+                          ? `${formatQuantity(m.dosage[0].doseAndRate[0].doseQuantity)}`
+                          : null
+                      }
+                    />
+                  </ListItem>
+                  {index < medications.length - 1 && <Divider component="li" />}
+                </React.Fragment>
               ))}
-            </ul>
-          </CardContent>
-        </Card>
+            </List>
+          </MuiCardContent>
+        </MuiCard>
 
         <Card>
           <CardContent>
