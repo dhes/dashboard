@@ -1,5 +1,5 @@
 // Dashboard.tsx
-import type { Observation, Patient, Procedure, MedicationStatement, Condition } from "fhir/r4";
+import type { Observation, Patient, Procedure, MedicationStatement, Condition, AllergyIntolerance, FamilyMemberHistory, Immunization } from "fhir/r4";
 import { useEffect, useState } from "react";
 // import { Card, CardContent } from "@/components/ui/card";
 import { Card, CardContent } from "./components/ui/card";
@@ -51,6 +51,9 @@ export default function Dashboard() {
   const [medications, setMedications] = useState<MedicationStatement[]>([]);
   const [conditions, setConditions] = useState<Condition[]>([]);
   const [patient, setPatient] = useState<Patient | null>(null);
+  const [allergies, setAllergies] = useState<AllergyIntolerance[]>([]);
+  const [familyHistories, setFamilyHistories] = useState<FamilyMemberHistory[]>([]);
+  const [immunizations, setImmunizations] = useState<Immunization[]>([]);
 
   useEffect(() => {
     fetchFHIR<Patient>("Patient", `_id=${PATIENT_ID}`).then((results) => setPatient(results[0]));
@@ -81,6 +84,9 @@ export default function Dashboard() {
       });
       setProcedures(sortedProcedures);
     });
+    fetchFHIR<AllergyIntolerance>("AllergyIntolerance", `patient=${PATIENT_ID}`).then(setAllergies);
+    fetchFHIR<FamilyMemberHistory>("FamilyMemberHistory", `patient=${PATIENT_ID}`).then(setFamilyHistories);
+    fetchFHIR<Immunization>("Immunization", `patient=${PATIENT_ID}`).then(setImmunizations);
   }, []);
 
   return (
@@ -96,6 +102,24 @@ export default function Dashboard() {
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+        <Card>
+          <CardContent>
+            <h2 className="text-xl font-bold mb-2">⚠️ Allergies</h2>
+            <ul>
+              {allergies.map((a: AllergyIntolerance) => (
+                <li key={a.id}>
+                  {getDisplayText(a.code)}
+                  {(() => {
+                    const status = getCodingDisplay(a.clinicalStatus?.coding);
+                    return status !== "Unknown" ? ` — ${status}` : "";
+                  })()}
+                  {/* {a.note?.[0]?.text ? ` — ${a.note[0].text}` : ""} */}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardContent>
             <h2 className="text-xl font-bold mb-2">🩺 Conditions</h2>
@@ -201,6 +225,45 @@ export default function Dashboard() {
                     </li>
                   );
                 })}
+            </ul>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <h2 className="text-xl font-bold mb-2">💉 Immunizations</h2>
+            <ul>
+              {immunizations
+                .sort((a, b) => (b.occurrenceDateTime || "").localeCompare(a.occurrenceDateTime || ""))
+                .map((imm) => (
+                  <li key={imm.id}>
+                    {imm.occurrenceDateTime?.slice(0, 10)} — {getDisplayText(imm.vaccineCode).slice(0, 60)}...
+                    {imm.site?.coding?.[0]?.display ? ` — ${imm.site.coding[0].display}` : ""}
+                  </li>
+                ))}
+            </ul>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <h2 className="text-xl font-bold mb-2">👪 Family History</h2>
+            <ul>
+              {familyHistories.map((fh) => (
+                <li key={fh.id}>
+                  {getDisplayText(fh.relationship).replace(/\s*\((disorder|qualifier value)\)$/i, "")}:
+                  <ul>
+                    {fh.condition?.map((cond, index) => (
+                      <li key={index}>
+                        {getDisplayText(cond.code).replace(/\s*\((disorder|qualifier value)\)$/i, "")}
+                        {cond.outcome?.coding?.[0]?.display
+                          ? ` — ${cond.outcome.coding[0].display.replace(/\s*\((disorder|qualifier value)\)$/i, "")}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
             </ul>
           </CardContent>
         </Card>
