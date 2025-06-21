@@ -62,6 +62,8 @@ export default function Dashboard() {
   const [encounterDate, setEncounterDate] = useState("");
   const [icd10, setIcd10] = useState("");
   const [cpt, setCpt] = useState("");
+  const [showSmokingStatusPrompt, setShowSmokingStatusPrompt] = useState(false);
+  const [latestSmokingObservation, setLatestSmokingObservation] = useState<Observation | null>(null);
 
   useEffect(() => {
     fetchFHIR<Patient>("Patient", `_id=${PATIENT_ID}`).then((results) => setPatient(results[0]));
@@ -77,7 +79,6 @@ export default function Dashboard() {
     fetchFHIR<Condition>("Condition", `patient=${PATIENT_ID}`).then((results) =>
       setConditions(results.filter((c) => c.clinicalStatus?.coding?.[0]?.code !== "resolved"))
     );
-    // fetchFHIR<MedicationStatement>("MedicationStatement", `patient=${PATIENT_ID}`).then(setMedications);
     fetchFHIR<MedicationStatement>("MedicationStatement", `patient=${PATIENT_ID}`).then((results) =>
       setMedications(results.filter((m: MedicationStatement) => m.status === "active"))
     );
@@ -108,7 +109,61 @@ export default function Dashboard() {
       .then((res) => res.json())
       .then((report) => setMeasureReport(report))
       .catch((err) => console.error("Error fetching measure report:", err));
-  }, []);
+    // Smoking status observation check
+    fetchFHIR<Observation>(
+      "Observation",
+      `code=72166-2&patient=${PATIENT_ID}`
+    ).then((results) => {
+      if (results.length > 0) {
+        const latest = results.sort((a, b) =>
+          new Date(b.effectiveDateTime || 0).getTime() - new Date(a.effectiveDateTime || 0).getTime()
+        )[0];
+        setLatestSmokingObservation(latest);
+        const latestDate = new Date(latest.effectiveDateTime || "");
+        const encounterDt = new Date(encounterDate || "");
+        // If latest smoking status is before the most recent encounter
+        if (encounterDate && encounterDt > latestDate) {
+          setShowSmokingStatusPrompt(true);
+        }
+        // For demo: If no encounter date, consider > 1 year old
+        if (!encounterDate) {
+          const now = new Date();
+          const diff = now.getTime() - latestDate.getTime();
+          if (diff > 365 * 24 * 60 * 60 * 1000) {
+            setShowSmokingStatusPrompt(true);
+          }
+        }
+      }
+    });
+  }, [encounterDate]);
+
+  // Handler for "No Change" smoking status update
+  async function handleNoChangeSmokingStatus(latest: Observation | null) {
+    if (!latest) return;
+    const updated = {
+      ...latest,
+      id: undefined,
+      meta: {
+        profile: [
+          "http://hl7.org/fhir/us/core/StructureDefinition/us-core-smokingstatus"
+        ]
+      },
+      effectiveDateTime: `${encounterDate || new Date().toISOString().slice(0, 10)}T08:00:00-10:00`
+    };
+    try {
+      const res = await fetch(`${FHIR_SERVER}/Observation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/fhir+json" },
+        body: JSON.stringify(updated),
+      });
+      if (!res.ok) throw new Error("Failed to post updated smoking status");
+      alert("Updated smoking history recorded.");
+      setShowSmokingStatusPrompt(false);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update smoking history.");
+    }
+  }
 
   async function handleEncounterSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -277,6 +332,42 @@ export default function Dashboard() {
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+      {/* Smoking Status Prompt, shown if needed */}
+      {showSmokingStatusPrompt && (
+        <div className="mb-4 p-4 bg-orange-100 border-l-4 border-orange-500 text-orange-800 rounded">
+          <p className="font-semibold mb-2">🚭 Smoking Status</p>
+          <p className="italic mb-2">
+            Last recorded smoking status: {latestSmokingObservation?.effectiveDateTime?.slice(0, 10)} — {latestSmokingObservation?.valueCodeableConcept?.text ?? latestSmokingObservation?.valueCodeableConcept?.coding?.[0]?.display}
+          </p>
+          <p>
+            The last documented smoking status is over a year old. Has anything changed in the patient's tobacco use since then?
+          </p>
+          <div className="mt-2 space-x-2">
+            <button
+              onClick={() => handleNoChangeSmokingStatus(latestSmokingObservation)}
+              className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+            >
+              No Change
+            </button>
+            <button
+              onClick={() => {
+                // show form instead (you can expand later)
+                alert("Please update smoking status manually.");
+                setShowSmokingStatusPrompt(false);
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Yes — Update
+            </button>
+            <button
+              onClick={() => setShowSmokingStatusPrompt(false)}
+              className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
         <Card>
           <CardContent>
             <h2 className="text-xl font-bold mb-2">⚠️ Allergies</h2>
