@@ -57,6 +57,11 @@ export default function Dashboard() {
   const [familyHistories, setFamilyHistories] = useState<FamilyMemberHistory[]>([]);
   const [immunizations, setImmunizations] = useState<Immunization[]>([]);
   const [psaReminder, setPsaReminder] = useState<string | null>(null);
+  const [measureReport, setMeasureReport] = useState<any | null>(null);
+  const [showEncounterForm, setShowEncounterForm] = useState(false);
+  const [encounterDate, setEncounterDate] = useState("");
+  const [icd10, setIcd10] = useState("");
+  const [cpt, setCpt] = useState("");
 
   useEffect(() => {
     fetchFHIR<Patient>("Patient", `_id=${PATIENT_ID}`).then((results) => setPatient(results[0]));
@@ -99,7 +104,68 @@ export default function Dashboard() {
     fetchFHIR<AllergyIntolerance>("AllergyIntolerance", `patient=${PATIENT_ID}`).then(setAllergies);
     fetchFHIR<FamilyMemberHistory>("FamilyMemberHistory", `patient=${PATIENT_ID}`).then(setFamilyHistories);
     fetchFHIR<Immunization>("Immunization", `patient=${PATIENT_ID}`).then(setImmunizations);
+    fetch(`${FHIR_SERVER}/Measure/CMS138FHIRPreventiveTobaccoCessation/$evaluate-measure?subject=Patient/${PATIENT_ID}&periodStart=2025-01-01T00:00:00&periodEnd=2025-12-31T23:59:59`)
+      .then((res) => res.json())
+      .then((report) => setMeasureReport(report))
+      .catch((err) => console.error("Error fetching measure report:", err));
   }, []);
+
+  async function handleEncounterSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!encounterDate || !cpt) return;
+
+    const encounterResource = {
+      resourceType: "Encounter",
+      meta: {
+        profile: ["http://hl7.org/fhir/us/qicore/StructureDefinition/qicore-encounter"]
+      },
+      status: "finished",
+      class: {
+        system: "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+        code: "AMB",
+      },
+      type: [
+        {
+          coding: [
+            {
+              system: cpt.startsWith("G")
+                ? "http://www.cms.gov/Medicare/Coding/HCPCSReleaseCodeSets"
+                : "http://www.ama-assn.org/go/cpt",
+              code: cpt,
+              display: cpt === "G0439"
+                ? "Annual wellness visit, includes a personalized prevention plan of service (pps), subsequent visit"
+                : "",
+            },
+          ],
+        },
+      ],
+      subject: {
+        reference: `Patient/${PATIENT_ID}`,
+      },
+      period: {
+        start: `${encounterDate}T08:00:00-10:00`,
+        end: `${encounterDate}T08:20:00-10:00`,
+      },
+    };
+
+    try {
+      const res = await fetch(`${FHIR_SERVER}/Encounter`, {
+        method: "POST",
+        headers: { "Content-Type": "application/fhir+json" },
+        body: JSON.stringify(encounterResource),
+      });
+
+      if (!res.ok) throw new Error("Failed to create Encounter");
+      alert("Encounter created successfully.");
+      setShowEncounterForm(false);
+      setEncounterDate("");
+      setIcd10("");
+      setCpt("");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create encounter.");
+    }
+  }
 
   return (
     <>
@@ -107,6 +173,97 @@ export default function Dashboard() {
         <div className="mb-4 p-4 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700">
           <p className="font-semibold">🔔 Reminder</p>
           <p>{psaReminder}</p>
+        </div>
+      )}
+      {measureReport && (
+        <div className="mb-4 p-4 bg-blue-100 border-l-4 border-blue-500 text-blue-700">
+          <h2 className="text-xl font-semibold mb-2">📊 Tobacco Cessation Measure Report</h2>
+          <p className="mb-2"><strong>Status:</strong> {measureReport.status}</p>
+          <p className="mb-2"><strong>Measurement Period:</strong> {measureReport.period?.start?.slice(0,10)} to {measureReport.period?.end?.slice(0,10)}</p>
+          {measureReport.group?.map((group: any, i: number) => (
+            <div key={i} className="mb-2">
+              <h3 className="font-bold">Group {i + 1}</h3>
+              <ul className="ml-4 list-disc">
+                {group.population?.map((pop: any, j: number) => (
+                  <li key={j}>
+                    {pop.code?.coding?.[0]?.display ?? "Unknown"}: {pop.count}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          {measureReport.group.every((group: any) =>
+            group.population.every((pop: any) => pop.count === 0)
+          ) && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-300 text-blue-800 rounded">
+              <p className="mb-2">
+                This patient has no qualifying encounters documented in 2025. Would you like to create a
+                qualifying office visit now to ensure they are counted in this measure?
+              </p>
+              <button
+                className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                onClick={() => setShowEncounterForm(true)}
+              >
+                Create Encounter
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {showEncounterForm && (
+        <div className="mb-4 p-4 border rounded bg-white shadow">
+          <h3 className="text-lg font-semibold mb-2">📝 New Encounter Form</h3>
+          <form onSubmit={handleEncounterSubmit}>
+            <div className="mb-2">
+              <label className="block font-medium">Encounter Date</label>
+              <input
+                type="date"
+                className="border p-1 rounded w-full"
+                value={encounterDate}
+                onChange={(e) => setEncounterDate(e.target.value)}
+              />
+            </div>
+            <div className="mb-2">
+              <label className="block font-medium">ICD-10-CM Code</label>
+              <select
+                className="border p-1 rounded w-full"
+                value={icd10}
+                onChange={(e) => setIcd10(e.target.value)}
+              >
+                <option value="">Select...</option>
+                <option value="Z00.00">Z00.00 - General adult medical exam without abnormal findings</option>
+                <option value="Z00.01">Z00.01 - General adult medical exam with abnormal findings</option>
+                <option value="Z00.121">Z00.121 - Well child visit, 12-17 years</option>
+                <option value="Z00.129">Z00.129 - Well child visit, NOS</option>
+              </select>
+            </div>
+            <div className="mb-2">
+              <label className="block font-medium">CPT Code</label>
+              <select
+                className="border p-1 rounded w-full"
+                value={cpt}
+                onChange={(e) => setCpt(e.target.value)}
+              >
+                <option value="">Select...</option>
+                <option value="99384">99384 - Initial preventive visit, 12-17 years</option>
+                <option value="99385">99385 - Initial preventive visit, 18-39 years</option>
+                <option value="99394">99394 - Periodic preventive visit, 12-17 years</option>
+                <option value="99395">99395 - Periodic preventive visit, 18-39 years</option>
+                <option value="G0438">G0438 - Initial Annual Wellness Visit</option>
+                <option value="G0439">G0439 - Subsequent Annual Wellness Visit</option>
+              </select>
+            </div>
+            <button type="submit" className="mt-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+              Submit
+            </button>
+            <button
+              type="button"
+              className="mt-2 ml-2 px-4 py-2 bg-gray-400 text-white rounded hover:bg-gray-500"
+              onClick={() => setShowEncounterForm(false)}
+            >
+              Cancel
+            </button>
+          </form>
         </div>
       )}
       {patient && (

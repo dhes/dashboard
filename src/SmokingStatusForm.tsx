@@ -13,7 +13,7 @@ import {
 const smokingOptions = [
   { code: "266927001", display: "Current every day smoker" },
   { code: "8517006", display: "Former smoker" },
-  { code: "266919005", display: "Never smoked tobacco (finding)" },
+  { code: "266919005", display: "Never smoked tobacco" },
   { code: "266928000", display: "Unknown if ever smoked" }
 ];
 
